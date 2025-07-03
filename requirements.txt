@@ -1,5 +1,7 @@
 streamlit==1.35.0
-numpy==1.24.4
-tensorflow-cpu==2.12.0
-transformers==4.30.2
-contractions==0.0.25
+transformers==4.41.1
+tensorflow==2.16.1
+spacy==3.7.4
+nltk==3.8.1
+contractions==0.1.73
+requests==2.31.0
