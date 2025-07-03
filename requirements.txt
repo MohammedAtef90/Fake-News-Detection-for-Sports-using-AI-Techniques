@@ -1,0 +1,15 @@
+numpy
+pandas
+polars
+matplotlib
+seaborn
+nltk
+spacy
+contractions
+beautifulsoup4
+requests
+tensorflow
+scikit-learn
+transformers
+mlflow
+mage-ai
