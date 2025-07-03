@@ -11,12 +11,11 @@ import time
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 
-# --- API Keys ---
+# API keys from secrets
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 GOOGLE_CSE_API_KEY = st.secrets["GOOGLE_CSE_API_KEY"]
 GOOGLE_CSE_CX = st.secrets["GOOGLE_CSE_CX"]
 MAGE_PIPELINE_TRIGGER_URL_STREAMLIT = st.secrets["MAGE_PIPELINE_TRIGGER_URL_STREAMLIT"]
-
 
 st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon="⚽")
 
@@ -25,16 +24,14 @@ def load_spacy_model():
     try:
         return spacy.load("en_core_web_sm")
     except OSError:
-        st.error("Downloading spaCy model...")
         spacy.cli.download("en_core_web_sm")
         return spacy.load("en_core_web_sm")
 
 nlp = load_spacy_model()
-
 stopword = set(stopwords.words('english')) - {"not", "won"}
 stopword.update(string.punctuation, {'“', '’', '”', '‘', '...'})
 
-preserved_entities = set([...])  # same list of preserved entities as before
+preserved_entities = set([])
 
 def clean(text):
     text = contractions.fix(text)
@@ -43,11 +40,9 @@ def clean(text):
     text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
     text = re.sub(r'[^a-zA-Z0-9\s\'-]', '', text)
     text = re.sub(r'\s+', ' ', text).strip().lower()
-
     doc = nlp(text)
     doc_entities = {ent.text.lower() for ent in doc.ents}
     current_preserved = preserved_entities.union(doc_entities)
-
     tokens = [
         token.lemma_ if token.text.lower() not in current_preserved and token.pos_ != "PROPN"
         else token.text for token in doc
@@ -69,9 +64,6 @@ def predict_bert(texts, tokenizer, model, max_len):
 
 def perform_google_cse_search(query, trusted_domains, num_results=5):
     search_results = []
-    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
-        return []
-
     site_filters = " OR ".join([f"site:{d}" for d in trusted_domains])
     full_query = f"{query} {site_filters}"
     search_url = "https://www.googleapis.com/customsearch/v1"
@@ -81,7 +73,6 @@ def perform_google_cse_search(query, trusted_domains, num_results=5):
         "q": full_query,
         "num": num_results
     }
-
     try:
         response = requests.get(search_url, params=params, timeout=10)
         response.raise_for_status()
@@ -94,13 +85,11 @@ def perform_google_cse_search(query, trusted_domains, num_results=5):
                     search_results.append(f"{i+1}. {title} - {link}")
     except:
         pass
-
     return search_results
 
 def check_with_llm(text):
     llm_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {'Content-Type': 'application/json'}
-
     prompt = f"""
 You are a professional fact-checking assistant specialized in football transfer news.
 Your job is to check whether the following football transfer news is **real or fake**, and provide a concise reason.
@@ -116,7 +105,6 @@ News: {text}
             "parts": [{"text": prompt}]
         }]
     }
-
     opinion, reason = "Gemini Opinion: Unknown", "Reason: Not provided"
     try:
         res = requests.post(llm_url, headers=headers, data=json.dumps(payload), timeout=30)
@@ -131,13 +119,11 @@ News: {text}
                     reason = line.strip()
     except:
         pass
-
     sources = perform_google_cse_search(text, [
         "bbc.com", "skysports.com", "espn.com", "theathletic.com",
         "goal.com", "transfermarkt.com", "marca.com", "sport.es",
         "bild.de", "lequipe.fr", "gazzetta.it", "reuters.com", "apnews.com"
     ])
-
     output = [opinion, reason]
     if sources:
         output.append("Please check these sources for more information:")
@@ -145,31 +131,22 @@ News: {text}
     else:
         output.append("No reliable sources found via search.")
         output.append("_**Tip:** Try searching the headline on Google + trusted sources._")
-
     return output
 
-def run_prediction_pipeline(headlines, tokenizer, model, nlp_model):
+def run_prediction_pipeline(headlines, tokenizer, model):
     try:
-        res = requests.post(MAGE_PIPELINE_TRIGGER_URL_STREAMLIT, timeout=10)
-        if res.ok:
-            print("✅ Mage Streamlit pipeline triggered successfully.")
-        else:
-            print(f"⚠️ Mage pipeline trigger failed: {res.status_code}")
-    except Exception as e:
-        print(f"⚠️ Mage pipeline trigger error: {e}")
-
+        requests.post(MAGE_PIPELINE_TRIGGER_URL_STREAMLIT, timeout=10)
+    except:
+        pass
     results = []
     valid_headlines = [h.strip() for h in headlines if h.strip()]
     if not valid_headlines:
         return []
-
     cleaned = [clean(h) for h in valid_headlines]
     max_len = max(len(tokenizer(h)['input_ids']) for h in cleaned)
-
     start_time = time.time()
     preds = predict_bert(cleaned, tokenizer, model, max_len)
     total_inference_time = time.time() - start_time
-
     for i, orig in enumerate(valid_headlines):
         fake_prob = preds[i][1] * 100
         llm_output = check_with_llm(orig)
@@ -181,28 +158,21 @@ def run_prediction_pipeline(headlines, tokenizer, model, nlp_model):
         })
     return results
 
-# Load model once
 tokenizer, model = load_classification_model()
 
-# --- Streamlit UI ---
 st.title("⚽ Football Transfer Fake News Detector")
-
 user_input = st.text_area(
     "✍️ Enter football transfer news (one per line):",
     height=150,
     value="Manchester United sign Jadon Sancho from Borussia Dortmund for £73 million"
 )
-
 if st.button("🔎 Predict"):
-
     if not user_input.strip():
         st.error("Please enter news headlines.")
         st.stop()
-
     headlines = [line.strip() for line in user_input.split("\n") if line.strip()]
     with st.spinner("Analyzing..."):
-        results = run_prediction_pipeline(headlines, tokenizer, model, nlp)
-
+        results = run_prediction_pipeline(headlines, tokenizer, model)
     if results:
         for i, res in enumerate(results):
             st.subheader(f"📰 News {i+1}: {res['original_headline']}")
