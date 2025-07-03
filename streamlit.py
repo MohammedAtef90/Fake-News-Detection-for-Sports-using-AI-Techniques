@@ -2,7 +2,6 @@ import streamlit as st
 import re
 import string
 import contractions
-import spacy
 import numpy as np
 import tensorflow as tf
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
@@ -10,10 +9,11 @@ from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon="⚽")
 
 @st.cache_resource
-def load_spacy_model():
-    return spacy.load("en_core_web_sm")
-
-nlp = load_spacy_model()
+def load_classification_model():
+    checkpoint = "bert-base-uncased"
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    model = TFAutoModelForSequenceClassification.from_pretrained(checkpoint, num_labels=2)
+    return tokenizer, model
 
 def clean(text):
     text = contractions.fix(text)
@@ -22,17 +22,7 @@ def clean(text):
     text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
     text = re.sub(r'[^a-zA-Z0-9\s\'-]', '', text)
     text = re.sub(r'\s+', ' ', text).strip().lower()
-
-    doc = nlp(text)
-    tokens = [token.lemma_ if token.pos_ != "PROPN" else token.text for token in doc]
-    return " ".join(tokens)
-
-@st.cache_resource
-def load_classification_model():
-    checkpoint = "bert-base-uncased"
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    model = TFAutoModelForSequenceClassification.from_pretrained(checkpoint, num_labels=2)
-    return tokenizer, model
+    return text
 
 def predict_bert(texts, tokenizer, model, max_len):
     inputs = tokenizer(texts, padding=True, truncation=True, max_length=max_len, return_tensors="tf")
@@ -65,7 +55,6 @@ user_input = st.text_area(
 )
 
 if st.button("🔎 Predict"):
-
     if not user_input.strip():
         st.error("Please enter news headlines.")
         st.stop()
