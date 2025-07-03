@@ -12,10 +12,11 @@ from nltk.corpus import stopwords
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 
 # --- API Keys ---
-GEMINI_API_KEY = "AIzaSyDpgrYq_9PMfywx2JHSIVUgwLpyq7CrAPM"
-GOOGLE_CSE_API_KEY = "AIzaSyAu6eP6QHgWqG-7jxKNoSwYabVmT-_81yw"
-GOOGLE_CSE_CX = "75faf2eec0cd44d84"
-MAGE_PIPELINE_TRIGGER_URL_STREAMLIT = "http://localhost:6789/api/pipeline_schedules/2/pipeline_runs/dc0d5cffdc664941a2237d4055349e44"
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+GOOGLE_CSE_API_KEY = st.secrets["GOOGLE_CSE_API_KEY"]
+GOOGLE_CSE_CX = st.secrets["GOOGLE_CSE_CX"]
+MAGE_PIPELINE_TRIGGER_URL_STREAMLIT = st.secrets["MAGE_PIPELINE_TRIGGER_URL_STREAMLIT"]
+
 
 st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon="⚽")
 
