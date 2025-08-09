@@ -8,8 +8,12 @@ import tensorflow as tf
 import requests
 import json
 import time
+import nltk
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
+
+# Download NLTK stopwords during build
+nltk.download('stopwords')
 
 # API keys from secrets
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -21,11 +25,7 @@ st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon=
 
 @st.cache_resource
 def load_spacy_model():
-    try:
-        return spacy.load("en_core_web_sm")
-    except OSError:
-        spacy.cli.download("en_core_web_sm")
-        return spacy.load("en_core_web_sm")
+    return spacy.load("en_core_web_sm")
 
 nlp = load_spacy_model()
 stopword = set(stopwords.words('english')) - {"not", "won"}
