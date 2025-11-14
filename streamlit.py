@@ -12,7 +12,6 @@ import nltk
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 
-# Download NLTK stopwords
 nltk.download('stopwords')
 
 # API keys from secrets
@@ -49,7 +48,7 @@ def clean(text):
     ]
     return " ".join(tokens)
 
-# Load BERT model (smallest for testing; replace with your trained model)
+# Load BERT model
 def load_classification_model():
     checkpoint = "bert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
@@ -197,3 +196,4 @@ if st.button("🔎 Predict"):
                 st.markdown("---")
         else:
             st.info("No valid news headlines to process.")
+
