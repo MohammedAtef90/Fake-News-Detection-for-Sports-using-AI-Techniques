@@ -12,6 +12,7 @@ import nltk
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 
+# Download NLTK stopwords
 nltk.download('stopwords')
 
 # API keys from secrets
@@ -22,11 +23,9 @@ MAGE_PIPELINE_TRIGGER_URL_STREAMLIT = st.secrets["MAGE_PIPELINE_TRIGGER_URL_STRE
 
 st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon="⚽")
 
-# Load spacy model
-def load_spacy_model():
-    return spacy.load("en_core_web_sm")
-
-nlp = load_spacy_model()
+# ------------------ Load Models ------------------ #
+# Load spaCy model (without @st.cache_resource to avoid errors)
+nlp = spacy.load("en_core_web_sm")
 
 stopword = set(stopwords.words('english')) - {"not", "won"}
 stopword.update(string.punctuation, {'“', '’', '”', '‘', '...'})
@@ -50,7 +49,7 @@ def clean(text):
     ]
     return " ".join(tokens)
 
-# Load BERT model
+# Load BERT model (smallest for testing; replace with your trained model)
 def load_classification_model():
     checkpoint = "bert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
@@ -63,6 +62,7 @@ def predict_bert(texts, tokenizer, model, max_len):
     probs = tf.nn.softmax(outputs.logits, axis=1).numpy()
     return probs
 
+# ------------------ Google Search ------------------ #
 def perform_google_cse_search(query, trusted_domains, num_results=5):
     search_results = []
     site_filters = " OR ".join([f"site:{d}" for d in trusted_domains])
@@ -88,6 +88,7 @@ def perform_google_cse_search(query, trusted_domains, num_results=5):
         pass
     return search_results
 
+# ------------------ Gemini LLM ------------------ #
 def clean_for_gemini(text):
     text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
     text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
@@ -141,6 +142,7 @@ News: {cleaned_text}
     output.append("_**Tip:** Try searching the headline on Google + trusted sources._")
     return output
 
+# ------------------ Pipeline ------------------ #
 def run_prediction_pipeline(headlines, tokenizer, model):
     try:
         requests.post(MAGE_PIPELINE_TRIGGER_URL_STREAMLIT, timeout=10)
@@ -166,8 +168,10 @@ def run_prediction_pipeline(headlines, tokenizer, model):
         })
     return results
 
+# ------------------ Load model ------------------ #
 tokenizer, model = load_classification_model()
 
+# ------------------ Streamlit UI ------------------ #
 st.title("⚽ Football Transfer Fake News Detector")
 
 user_input = st.text_area(
