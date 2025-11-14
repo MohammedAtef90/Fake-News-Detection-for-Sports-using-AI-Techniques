@@ -22,11 +22,12 @@ MAGE_PIPELINE_TRIGGER_URL_STREAMLIT = st.secrets["MAGE_PIPELINE_TRIGGER_URL_STRE
 
 st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon="⚽")
 
-@st.cache_resource
+# Load spacy model
 def load_spacy_model():
     return spacy.load("en_core_web_sm")
 
 nlp = load_spacy_model()
+
 stopword = set(stopwords.words('english')) - {"not", "won"}
 stopword.update(string.punctuation, {'“', '’', '”', '‘', '...'})
 
@@ -49,7 +50,7 @@ def clean(text):
     ]
     return " ".join(tokens)
 
-@st.cache_resource
+# Load BERT model
 def load_classification_model():
     checkpoint = "bert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
