@@ -11,8 +11,8 @@ import time
 import nltk
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
+from google import genai
 
-# Download NLTK stopwords during build
 nltk.download('stopwords')
 
 # API keys from secrets
@@ -87,44 +87,40 @@ def perform_google_cse_search(query, trusted_domains, num_results=5):
         pass
     return search_results
 
+client = genai.Client(api_key=GEMINI_API_KEY)
+
 def check_with_llm(text):
-    llm_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
     prompt = f"""
 You are a professional fact-checking assistant specialized in football transfer news.
-Your job is to check whether the following football transfer news is **real or fake**, and provide a concise reason.
-
-Reply in this **exact format**:
-Label: Real or Fake
-Reason: one short explanation (max 2 lines)
+Check if this news is Real or Fake and give a short reason (max 2 lines).
 
 News: {text}
+Reply exactly as:
+Label: Real or Fake
+Reason: short explanation
 """
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }]
-    }
-    opinion, reason = "Gemini Opinion: Unknown", "Reason: Not provided"
+    opinion, reason = "No Gemini response", "No reason provided"
     try:
-        res = requests.post(llm_url, headers=headers, data=json.dumps(payload), timeout=30)
-        res.raise_for_status()
-        result = res.json()
-        if 'candidates' in result and result['candidates']:
-            lines = result['candidates'][0]['content']['parts'][0]['text'].strip().split("\n")
-            for line in lines:
-                if line.lower().startswith("label:"):
-                    opinion = "Gemini Opinion: " + line.split(":", 1)[1].strip()
-                elif line.lower().startswith("reason:"):
-                    reason = line.strip()
-    except:
-        pass
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+        text_lines = response.text.split("\n")
+        for line in text_lines:
+            if line.lower().startswith("label:"):
+                opinion = line.split(":",1)[1].strip()
+            elif line.lower().startswith("reason:"):
+                reason = line.split(":",1)[1].strip()
+    except Exception as e:
+        print("Gemini API error:", e)
+
     sources = perform_google_cse_search(text, [
-        "bbc.com", "skysports.com", "espn.com", "theathletic.com",
-        "goal.com", "transfermarkt.com", "marca.com", "sport.es",
-        "bild.de", "lequipe.fr", "gazzetta.it", "reuters.com", "apnews.com"
+        "bbc.com","skysports.com","espn.com","theathletic.com",
+        "goal.com","transfermarkt.com","marca.com","sport.es",
+        "bild.de","lequipe.fr","gazzetta.it","reuters.com","apnews.com"
     ])
-    output = [opinion, reason]
+    
+    output = [f"Gemini Opinion: {opinion}", f"Reason: {reason}"]
     if sources:
         output.append("Please check these sources for more information:")
         output.extend(sources)
