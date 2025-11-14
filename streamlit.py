@@ -11,7 +11,6 @@ import time
 import nltk
 from nltk.corpus import stopwords
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
-from google import genai
 
 nltk.download('stopwords')
 
@@ -45,7 +44,8 @@ def clean(text):
     current_preserved = preserved_entities.union(doc_entities)
     tokens = [
         token.lemma_ if token.text.lower() not in current_preserved and token.pos_ != "PROPN"
-        else token.text for token in doc
+        else token.text
+        for token in doc
     ]
     return " ".join(tokens)
 
@@ -87,46 +87,57 @@ def perform_google_cse_search(query, trusted_domains, num_results=5):
         pass
     return search_results
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+def clean_for_gemini(text):
+    text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
+    text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 def check_with_llm(text):
+    llm_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    headers = {'Content-Type': 'application/json'}
+    cleaned_text = clean_for_gemini(text)
     prompt = f"""
 You are a professional fact-checking assistant specialized in football transfer news.
-Check if this news is Real or Fake and give a short reason (max 2 lines).
-
-News: {text}
-Reply exactly as:
+Your job is to check whether the following football transfer news is real or fake,
+and provide a concise reason. Reply in this exact format:
 Label: Real or Fake
-Reason: short explanation
+Reason: one short explanation (max 2 lines)
+News: {cleaned_text}
 """
-    opinion, reason = "No Gemini response", "No reason provided"
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-        text_lines = response.text.split("\n")
-        for line in text_lines:
-            if line.lower().startswith("label:"):
-                opinion = line.split(":",1)[1].strip()
-            elif line.lower().startswith("reason:"):
-                reason = line.split(":",1)[1].strip()
-    except Exception as e:
-        print("Gemini API error:", e)
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    opinion, reason = "Gemini Opinion: Unknown", "Reason: Not provided"
 
-    sources = perform_google_cse_search(text, [
-        "bbc.com","skysports.com","espn.com","theathletic.com",
-        "goal.com","transfermarkt.com","marca.com","sport.es",
-        "bild.de","lequipe.fr","gazzetta.it","reuters.com","apnews.com"
-    ])
-    
-    output = [f"Gemini Opinion: {opinion}", f"Reason: {reason}"]
+    try:
+        res = requests.post(llm_url, headers=headers, data=json.dumps(payload), timeout=30)
+        res.raise_for_status()
+        result = res.json()
+        if 'candidates' in result and result['candidates']:
+            lines = result['candidates'][0]['content']['parts'][0]['text'].strip().split("\n")
+            for line in lines:
+                if line.lower().startswith("label:"):
+                    label = line.split(":", 1)[1].strip()
+                    if label.lower() in ["real", "fake"]:
+                        opinion = "Gemini Opinion: " + label
+                elif line.lower().startswith("reason:"):
+                    reason = line.strip()
+    except:
+        opinion, reason = "Gemini Opinion: Could not retrieve", "Reason: Please check API or input formatting"
+
+    sources = perform_google_cse_search(
+        text,
+        ["bbc.com","skysports.com","espn.com","theathletic.com","goal.com",
+         "transfermarkt.com","marca.com","sport.es","bild.de","lequipe.fr",
+         "gazzetta.it","reuters.com","apnews.com"]
+    )
+
+    output = [opinion, reason]
     if sources:
         output.append("Please check these sources for more information:")
         output.extend(sources)
     else:
         output.append("No reliable sources found via search.")
-        output.append("_**Tip:** Try searching the headline on Google + trusted sources._")
+    output.append("_**Tip:** Try searching the headline on Google + trusted sources._")
     return output
 
 def run_prediction_pipeline(headlines, tokenizer, model):
@@ -157,11 +168,13 @@ def run_prediction_pipeline(headlines, tokenizer, model):
 tokenizer, model = load_classification_model()
 
 st.title("⚽ Football Transfer Fake News Detector")
+
 user_input = st.text_area(
     "✍️ Enter football transfer news (one per line):",
     height=150,
     value="Manchester United sign Jadon Sancho from Borussia Dortmund for £73 million"
 )
+
 if st.button("🔎 Predict"):
     if not user_input.strip():
         st.error("Please enter news headlines.")
@@ -169,13 +182,13 @@ if st.button("🔎 Predict"):
     headlines = [line.strip() for line in user_input.split("\n") if line.strip()]
     with st.spinner("Analyzing..."):
         results = run_prediction_pipeline(headlines, tokenizer, model)
-    if results:
-        for i, res in enumerate(results):
-            st.subheader(f"📰 News {i+1}: {res['original_headline']}")
-            st.write(f"**Fake Probability:** {res['fake_probability']:.2f}%")
-            st.write(f"**Model Inference Time:** {res['inference_time']:.3f} seconds")
-            for line in res['analysis_output']:
-                st.markdown(line)
-            st.markdown("---")
-    else:
-        st.info("No valid news headlines to process.")
+        if results:
+            for i, res in enumerate(results):
+                st.subheader(f"📰 News {i+1}: {res['original_headline']}")
+                st.write(f"**Fake Probability:** {res['fake_probability']:.2f}%")
+                st.write(f"**Model Inference Time:** {res['inference_time']:.3f} seconds")
+                for line in res['analysis_output']:
+                    st.markdown(line)
+                st.markdown("---")
+        else:
+            st.info("No valid news headlines to process.")
