@@ -22,9 +22,9 @@ MAGE_PIPELINE_TRIGGER_URL_STREAMLIT = st.secrets["MAGE_PIPELINE_TRIGGER_URL_STRE
 
 st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon="⚽")
 
-# ------------------ Load Models ------------------ #
-# Load spaCy model (without @st.cache_resource to avoid errors)
-nlp = spacy.load("en_core_web_sm")
+# ------------------ Load spaCy (light mode) ------------------ #
+# بدل model تقيل بحاجه خفيفة 
+nlp = spacy.blank("en")
 
 stopword = set(stopwords.words('english')) - {"not", "won"}
 stopword.update(string.punctuation, {'“', '’', '”', '‘', '...'})
@@ -38,21 +38,22 @@ def clean(text):
     text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
     text = re.sub(r'[^a-zA-Z0-9\s\'-]', '', text)
     text = re.sub(r'\s+', ' ', text).strip().lower()
+
+    # spaCy blank: tokenization فقط
     doc = nlp(text)
-    doc_entities = {ent.text.lower() for ent in doc.ents}
-    current_preserved = preserved_entities.union(doc_entities)
-    tokens = [
-        token.lemma_ if token.text.lower() not in current_preserved and token.pos_ != "PROPN"
-        else token.text
-        for token in doc
-    ]
+    tokens = [token.text for token in doc]
     return " ".join(tokens)
 
-# Load BERT model
+# ------------------ BERT model (cached + smaller) ------------------ #
+@st.cache_resource
 def load_classification_model():
-    checkpoint = "bert-base-uncased"
+    checkpoint = "distilbert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    model = TFAutoModelForSequenceClassification.from_pretrained(checkpoint, num_labels=2)
+    model = TFAutoModelForSequenceClassification.from_pretrained(
+        checkpoint,
+        num_labels=2,
+        from_pt=False
+    )
     return tokenizer, model
 
 def predict_bert(texts, tokenizer, model, max_len):
@@ -87,7 +88,7 @@ def perform_google_cse_search(query, trusted_domains, num_results=5):
         pass
     return search_results
 
-# ------------------ Gemini LLM ------------------ #
+# ------------------ Gemini ------------------ #
 def clean_for_gemini(text):
     text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
     text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
@@ -127,9 +128,9 @@ News: {cleaned_text}
 
     sources = perform_google_cse_search(
         text,
-        ["bbc.com","skysports.com","espn.com","theathletic.com","goal.com",
-         "transfermarkt.com","marca.com","sport.es","bild.de","lequipe.fr",
-         "gazzetta.it","reuters.com","apnews.com"]
+        ["bbc.com", "skysports.com", "espn.com", "theathletic.com", "goal.com",
+         "transfermarkt.com", "marca.com", "sport.es", "bild.de", "lequipe.fr",
+         "gazzetta.it", "reuters.com", "apnews.com"]
     )
 
     output = [opinion, reason]
@@ -147,15 +148,22 @@ def run_prediction_pipeline(headlines, tokenizer, model):
         requests.post(MAGE_PIPELINE_TRIGGER_URL_STREAMLIT, timeout=10)
     except:
         pass
+
     results = []
     valid_headlines = [h.strip() for h in headlines if h.strip()]
     if not valid_headlines:
         return []
+
     cleaned = [clean(h) for h in valid_headlines]
-    max_len = max(len(tokenizer(h)['input_ids']) for h in cleaned)
+    max_len = min(
+        max(len(tokenizer(h)['input_ids']) for h in cleaned),
+        128
+    )
+
     start_time = time.time()
     preds = predict_bert(cleaned, tokenizer, model, max_len)
     total_inference_time = time.time() - start_time
+
     for i, orig in enumerate(valid_headlines):
         fake_prob = preds[i][1] * 100
         llm_output = check_with_llm(orig)
@@ -165,6 +173,7 @@ def run_prediction_pipeline(headlines, tokenizer, model):
             "analysis_output": llm_output,
             "inference_time": total_inference_time / len(valid_headlines)
         })
+
     return results
 
 # ------------------ Load model ------------------ #
@@ -183,6 +192,7 @@ if st.button("🔎 Predict"):
     if not user_input.strip():
         st.error("Please enter news headlines.")
         st.stop()
+
     headlines = [line.strip() for line in user_input.split("\n") if line.strip()]
     with st.spinner("Analyzing..."):
         results = run_prediction_pipeline(headlines, tokenizer, model)
@@ -196,4 +206,3 @@ if st.button("🔎 Predict"):
                 st.markdown("---")
         else:
             st.info("No valid news headlines to process.")
-
