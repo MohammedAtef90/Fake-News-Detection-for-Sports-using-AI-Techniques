@@ -14,21 +14,17 @@ from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 
 nltk.download('stopwords')
 
-# API keys from secrets
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-GOOGLE_CSE_API_KEY = st.secrets["GOOGLE_CSE_API_KEY"]
-GOOGLE_CSE_CX = st.secrets["GOOGLE_CSE_CX"]
+GOOGLE_CSE_API_KEY = st.secrets["Google_CSE_API_KEY"]
+GOOGLE_CSE_CX = st.secrets["Google_CSE_CX"]
 MAGE_PIPELINE_TRIGGER_URL_STREAMLIT = st.secrets["MAGE_PIPELINE_TRIGGER_URL_STREAMLIT"]
 
 st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon="⚽")
 
-# ------------------ Load spaCy (light mode) ------------------ #
-# بدل model تقيل بحاجه خفيفة 
 nlp = spacy.blank("en")
 
 stopword = set(stopwords.words('english')) - {"not", "won"}
 stopword.update(string.punctuation, {'“', '’', '”', '‘', '...'})
-
 preserved_entities = set([])
 
 def clean(text):
@@ -38,13 +34,10 @@ def clean(text):
     text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
     text = re.sub(r'[^a-zA-Z0-9\s\'-]', '', text)
     text = re.sub(r'\s+', ' ', text).strip().lower()
-
-    # spaCy blank: tokenization فقط
     doc = nlp(text)
     tokens = [token.text for token in doc]
     return " ".join(tokens)
 
-# ------------------ BERT model (cached + smaller) ------------------ #
 @st.cache_resource
 def load_classification_model():
     checkpoint = "distilbert-base-uncased"
@@ -62,7 +55,6 @@ def predict_bert(texts, tokenizer, model, max_len):
     probs = tf.nn.softmax(outputs.logits, axis=1).numpy()
     return probs
 
-# ------------------ Google Search ------------------ #
 def perform_google_cse_search(query, trusted_domains, num_results=5):
     search_results = []
     site_filters = " OR ".join([f"site:{d}" for d in trusted_domains])
@@ -88,7 +80,6 @@ def perform_google_cse_search(query, trusted_domains, num_results=5):
         pass
     return search_results
 
-# ------------------ Gemini ------------------ #
 def clean_for_gemini(text):
     text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
     text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
@@ -139,10 +130,9 @@ News: {cleaned_text}
         output.extend(sources)
     else:
         output.append("No reliable sources found via search.")
-    output.append("_**Tip:** Try searching the headline on Google + trusted sources._")
+
     return output
 
-# ------------------ Pipeline ------------------ #
 def run_prediction_pipeline(headlines, tokenizer, model):
     try:
         requests.post(MAGE_PIPELINE_TRIGGER_URL_STREAMLIT, timeout=10)
@@ -176,10 +166,8 @@ def run_prediction_pipeline(headlines, tokenizer, model):
 
     return results
 
-# ------------------ Load model ------------------ #
 tokenizer, model = load_classification_model()
 
-# ------------------ Streamlit UI ------------------ #
 st.title("⚽ Football Transfer Fake News Detector")
 
 user_input = st.text_area(
