@@ -2,7 +2,6 @@ import streamlit as st
 import re
 import string
 import contractions
-import spacy
 import numpy as np
 import tensorflow as tf
 import requests
@@ -14,160 +13,131 @@ from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 
 nltk.download('stopwords')
 
+# ------------------ API keys ------------------ #
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-GOOGLE_CSE_API_KEY = st.secrets["Google_CSE_API_KEY"]
-GOOGLE_CSE_CX = st.secrets["Google_CSE_CX"]
+GOOGLE_CSE_API_KEY = st.secrets["GOOGLE_CSE_API_KEY"]
+GOOGLE_CSE_CX = st.secrets["GOOGLE_CSE_CX"]
 MAGE_PIPELINE_TRIGGER_URL_STREAMLIT = st.secrets["MAGE_PIPELINE_TRIGGER_URL_STREAMLIT"]
 
 st.set_page_config(page_title="Football Transfer Fake News Detector", page_icon="⚽")
 
-nlp = spacy.blank("en")
-
+# ------------------ Clean text ------------------ #
 stopword = set(stopwords.words('english')) - {"not", "won"}
-stopword.update(string.punctuation, {'“', '’', '”', '‘', '...'})
-preserved_entities = set([])
+stopword.update(string.punctuation, {'“','’','”','‘','...'})
 
 def clean(text):
     text = contractions.fix(text)
     text = re.sub(r'<.*?>|\[.*?\]|\n', ' ', text)
     text = re.sub(r'https?://\S+|www\.\S+', '', text)
-    text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
+    text = text.replace('$',' dollar ').replace('€',' euro ').replace('£',' pound ')
     text = re.sub(r'[^a-zA-Z0-9\s\'-]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip().lower()
-    doc = nlp(text)
-    tokens = [token.text for token in doc]
-    return " ".join(tokens)
+    text = re.sub(r'\s+',' ', text).strip().lower()
 
+    words = text.split()
+    words = [w for w in words if w not in stopword]
+    return " ".join(words)
+
+# ------------------ Load BERT once only ------------------ #
 @st.cache_resource
-def load_classification_model():
+def load_model():
     checkpoint = "distilbert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    model = TFAutoModelForSequenceClassification.from_pretrained(
-        checkpoint,
-        num_labels=2,
-        from_pt=False
-    )
+    model = TFAutoModelForSequenceClassification.from_pretrained(checkpoint, num_labels=2)
     return tokenizer, model
 
-def predict_bert(texts, tokenizer, model, max_len):
+tokenizer, model = load_model()
+
+# ------------------ BERT prediction ------------------ #
+def predict_bert(texts):
+    max_len = 64
     inputs = tokenizer(texts, padding=True, truncation=True, max_length=max_len, return_tensors="tf")
     outputs = model(inputs)
     probs = tf.nn.softmax(outputs.logits, axis=1).numpy()
     return probs
 
-def perform_google_cse_search(query, trusted_domains, num_results=5):
-    search_results = []
-    site_filters = " OR ".join([f"site:{d}" for d in trusted_domains])
+# ------------------ Google Search ------------------ #
+def perform_google_cse_search(query):
+    domains = [
+        "bbc.com","skysports.com","espn.com","theathletic.com","goal.com",
+        "transfermarkt.com","marca.com","sport.es","bild.de","lequipe.fr",
+        "gazzetta.it","reuters.com","apnews.com"
+    ]
+    site_filters = " OR ".join([f"site:{d}" for d in domains])
     full_query = f"{query} {site_filters}"
-    search_url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        "key": GOOGLE_CSE_API_KEY,
-        "cx": GOOGLE_CSE_CX,
-        "q": full_query,
-        "num": num_results
-    }
-    try:
-        response = requests.get(search_url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        if 'items' in data:
-            for i, item in enumerate(data['items']):
-                title = item.get('title')
-                link = item.get('link')
-                if title and link:
-                    search_results.append(f"{i+1}. {title} - {link}")
-    except:
-        pass
-    return search_results
 
-def clean_for_gemini(text):
-    text = text.replace('$', ' dollar ').replace('€', ' euro ').replace('£', ' pound ')
-    text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-def check_with_llm(text):
-    llm_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
-    cleaned_text = clean_for_gemini(text)
-    prompt = f"""
-You are a professional fact-checking assistant specialized in football transfer news.
-Your job is to check whether the following football transfer news is real or fake,
-and provide a concise reason. Reply in this exact format:
-Label: Real or Fake
-Reason: one short explanation (max 2 lines)
-News: {cleaned_text}
-"""
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    opinion, reason = "Gemini Opinion: Unknown", "Reason: Not provided"
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {"key": GOOGLE_CSE_API_KEY, "cx": GOOGLE_CSE_CX, "q": full_query, "num": 5}
 
     try:
-        res = requests.post(llm_url, headers=headers, data=json.dumps(payload), timeout=30)
-        res.raise_for_status()
-        result = res.json()
-        if 'candidates' in result and result['candidates']:
-            lines = result['candidates'][0]['content']['parts'][0]['text'].strip().split("\n")
-            for line in lines:
-                if line.lower().startswith("label:"):
-                    label = line.split(":", 1)[1].strip()
-                    if label.lower() in ["real", "fake"]:
-                        opinion = "Gemini Opinion: " + label
-                elif line.lower().startswith("reason:"):
-                    reason = line.strip()
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        if 'items' not in data:
+            return []
+
+        out = []
+        for i, item in enumerate(data['items']):
+            out.append(f"{i+1}. {item.get('title')} - {item.get('link')}")
+        return out
     except:
-        opinion, reason = "Gemini Opinion: Could not retrieve", "Reason: Please check API or input formatting"
-
-    sources = perform_google_cse_search(
-        text,
-        ["bbc.com", "skysports.com", "espn.com", "theathletic.com", "goal.com",
-         "transfermarkt.com", "marca.com", "sport.es", "bild.de", "lequipe.fr",
-         "gazzetta.it", "reuters.com", "apnews.com"]
-    )
-
-    output = [opinion, reason]
-    if sources:
-        output.append("Please check these sources for more information:")
-        output.extend(sources)
-    else:
-        output.append("No reliable sources found via search.")
-
-    return output
-
-def run_prediction_pipeline(headlines, tokenizer, model):
-    try:
-        requests.post(MAGE_PIPELINE_TRIGGER_URL_STREAMLIT, timeout=10)
-    except:
-        pass
-
-    results = []
-    valid_headlines = [h.strip() for h in headlines if h.strip()]
-    if not valid_headlines:
         return []
 
-    cleaned = [clean(h) for h in valid_headlines]
-    max_len = min(
-        max(len(tokenizer(h)['input_ids']) for h in cleaned),
-        128
-    )
+# ------------------ Gemini ------------------ #
+def check_with_llm(text):
+    cleaned = re.sub(r'[^a-zA-Z0-9\s]', '', text)
 
-    start_time = time.time()
-    preds = predict_bert(cleaned, tokenizer, model, max_len)
-    total_inference_time = time.time() - start_time
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": f"Check if this football transfer news is real or fake.\nLabel: Real or Fake\nReason: short.\nNews: {cleaned}"
+            }]
+        }]
+    }
+    headers = {"Content-Type":"application/json"}
 
-    for i, orig in enumerate(valid_headlines):
+    try:
+        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=20)
+        r.raise_for_status()
+        txt = r.json()['candidates'][0]['content']['parts'][0]['text']
+
+        lines = txt.split("\n")
+        label = next((l for l in lines if "Label" in l), "Label: Unknown")
+        reason = next((l for l in lines if "Reason" in l), "Reason: Unknown")
+    except:
+        label = "Label: Unknown"
+        reason = "Reason: API error"
+
+    sources = perform_google_cse_search(text)
+
+    out = [label, reason]
+    out.extend(sources if sources else ["No trusted sources found."])
+    return out
+
+# ------------------ Main prediction pipeline ------------------ #
+def pipeline(lines):
+    cleaned = [clean(t) for t in lines]
+
+    start = time.time()
+    preds = predict_bert(cleaned)
+    infer_time = time.time() - start
+
+    results = []
+    for i, original in enumerate(lines):
         fake_prob = preds[i][1] * 100
-        llm_output = check_with_llm(orig)
+        llm = check_with_llm(original)
+
         results.append({
-            "original_headline": orig,
-            "fake_probability": fake_prob,
-            "analysis_output": llm_output,
-            "inference_time": total_inference_time / len(valid_headlines)
+            "headline": original,
+            "fake_prob": fake_prob,
+            "analysis": llm,
+            "time": infer_time / len(lines)
         })
 
     return results
 
-tokenizer, model = load_classification_model()
-
+# ------------------ Streamlit UI ------------------ #
 st.title("⚽ Football Transfer Fake News Detector")
 
 user_input = st.text_area(
@@ -178,19 +148,21 @@ user_input = st.text_area(
 
 if st.button("🔎 Predict"):
     if not user_input.strip():
-        st.error("Please enter news headlines.")
+        st.error("Please enter news!")
         st.stop()
 
-    headlines = [line.strip() for line in user_input.split("\n") if line.strip()]
+    lines = [x.strip() for x in user_input.split("\n") if x.strip()]
+
     with st.spinner("Analyzing..."):
-        results = run_prediction_pipeline(headlines, tokenizer, model)
-        if results:
-            for i, res in enumerate(results):
-                st.subheader(f"📰 News {i+1}: {res['original_headline']}")
-                st.write(f"**Fake Probability:** {res['fake_probability']:.2f}%")
-                st.write(f"**Model Inference Time:** {res['inference_time']:.3f} seconds")
-                for line in res['analysis_output']:
-                    st.markdown(line)
-                st.markdown("---")
-        else:
-            st.info("No valid news headlines to process.")
+        results = pipeline(lines)
+
+        for i, r in enumerate(results):
+            st.subheader(f"📰 News {i+1}: {r['headline']}")
+            st.write(f"Fake Probability: {r['fake_prob']:.2f}%")
+            st.write(f"Model Inference Time: {r['time']:.3f} seconds")
+
+            for row in r['analysis']:
+                st.markdown(row)
+
+            st.markdown("---")
+
